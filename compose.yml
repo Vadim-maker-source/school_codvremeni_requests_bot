@@ -1,0 +1,37 @@
+# Future production example. Requires external HTTPS reverse proxy and supplied secrets.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: requests
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d requests']
+      interval: 5s
+      retries: 10
+  api:
+    build: ./backend
+    env_file: backend/.env
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: ${DATABASE_URL:?Set URL-encoded postgresql+psycopg DATABASE_URL}
+      COOKIE_SECURE: 'true'
+      ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?Set HTTPS PUBLIC_ORIGIN}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Set a strong admin password}
+      BOOTSTRAP_OPERATOR_PASSWORD: ${BOOTSTRAP_OPERATOR_PASSWORD:?Set a strong operator password}
+      NOTIFICATIONS_ENABLED: 'false'
+    depends_on:
+      db: {condition: service_healthy}
+    volumes: [api-data:/app/data]
+    command: [sh, -c, 'python -m app.bootstrap && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-access-log']
+  web:
+    build:
+      context: .
+      args: {API_INTERNAL_URL: 'http://api:8000'}
+    depends_on: [api]
+    ports: ['127.0.0.1:3000:3000']
+volumes:
+  pgdata:
+  api-data:

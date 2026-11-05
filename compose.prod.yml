@@ -1,0 +1,80 @@
+name: requestsbotweb
+
+x-runtime: &runtime
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: '3'}
+
+services:
+  db:
+    <<: *runtime
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: requestsbotweb
+      POSTGRES_USER: requests
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set database password}
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U requests -d requestsbotweb]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    <<: *runtime
+    image: requestsbotweb-api:production
+    build: ./backend
+    env_file: .env
+    environment:
+      ENVIRONMENT: production
+      COOKIE_SECURE: 'true'
+      ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?Set HTTPS origin}
+    depends_on:
+      db: {condition: service_healthy}
+    volumes: [api-data:/app/data]
+    command: [sh, -c, 'python -m app.bootstrap && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-access-log']
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=4)']
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+
+  bot:
+    <<: *runtime
+    image: requestsbotweb-api:production
+    env_file: .env
+    environment:
+      ENVIRONMENT: production
+      COOKIE_SECURE: 'true'
+      ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?Set HTTPS origin}
+    command: [python, -m, app.bot]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, 'import time; from app.database import SessionLocal; from app.models import SystemState; db=SessionLocal(); row=db.get(SystemState,"telegram_heartbeat"); assert row and time.time()-row.value<60; db.close()']
+      interval: 20s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+  web:
+    <<: *runtime
+    build:
+      context: .
+      args: {API_INTERNAL_URL: 'http://api:8000'}
+    image: requestsbotweb-web:production
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ['127.0.0.1:3080:3000']
+    healthcheck:
+      test: [CMD, node, -e, 'fetch("http://127.0.0.1:3000").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))']
+      interval: 20s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+volumes:
+  pgdata:
+  api-data:

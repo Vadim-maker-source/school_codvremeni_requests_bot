@@ -1,0 +1,7 @@
+[Unit]
+Description=Renew RequestsBotWeb IP certificate
+After=network-online.target nginx.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/opt/requestsbotweb/certbot/bin/certbot renew --config-dir /opt/requestsbotweb/tls --work-dir /opt/requestsbotweb/tls-work --logs-dir /opt/requestsbotweb/tls-logs --quiet --deploy-hook "/usr/sbin/nginx -t && /usr/bin/systemctl reload nginx"

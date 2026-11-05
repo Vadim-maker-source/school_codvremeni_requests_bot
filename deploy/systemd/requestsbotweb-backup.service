@@ -1,0 +1,7 @@
+[Unit]
+Description=Backup RequestsBotWeb database
+Requires=docker.service
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/opt/requestsbotweb/backup.sh

@@ -1,0 +1,61 @@
+{
+  "date_utc": "2026-11-05T11:12:42Z",
+  "os": "Windows-11-10.0.26200-SP0",
+  "cpu": "Intel64 Family 6 Model 141 Stepping 1, GenuineIntel",
+  "logical_cpus": 12,
+  "python": "3.12.5",
+  "database": "SQLite, temporary local file, WAL, busy_timeout 15s, single uvicorn worker",
+  "http_smoke": {
+    "result": "passed",
+    "steps": [
+      "create",
+      "list",
+      "detail",
+      "take",
+      "reassign",
+      "complete",
+      "history",
+      "stats"
+    ],
+    "health": {
+      "status": "ok",
+      "database": "ok",
+      "notifications": "disabled"
+    }
+  },
+  "load": {
+    "elapsed_seconds": 15.03,
+    "concurrent_clients": 4,
+    "cycle": "create → list (15) → take in progress",
+    "completed_cycles": 787,
+    "cycles_per_second": 52.36,
+    "extrapolated_cycles_per_hour": 188505,
+    "operations": {
+      "create": {
+        "attempts": 787,
+        "successes": 787,
+        "error_fraction": 0.0,
+        "mean_ms": 24.36,
+        "p95_ms": 51.69,
+        "successful_ops_per_second": 52.36
+      },
+      "list": {
+        "attempts": 787,
+        "successes": 787,
+        "error_fraction": 0.0,
+        "mean_ms": 25.57,
+        "p95_ms": 42.67,
+        "successful_ops_per_second": 52.36
+      },
+      "status": {
+        "attempts": 787,
+        "successes": 787,
+        "error_fraction": 0.0,
+        "mean_ms": 26.36,
+        "p95_ms": 57.79,
+        "successful_ops_per_second": 52.36
+      }
+    }
+  },
+  "limitations": "Short local extrapolation only; no claim of hour-long stability or PostgreSQL performance."
+}

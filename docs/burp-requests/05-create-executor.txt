@@ -1,0 +1,9 @@
+POST /api/staff HTTP/1.1
+Host: 127.0.0.1:8000
+Connection: close
+Cookie: shkola_session={{SESSION}}; shkola_csrf={{CSRF}}
+X-CSRF-Token: {{CSRF}}
+Content-Type: application/json
+Content-Length: 142
+
+{"name":"Исполнитель демонстрации","login":"jury_executor","password":"{{CHOOSE_EXECUTOR_PASSWORD}}","role":"operator"}

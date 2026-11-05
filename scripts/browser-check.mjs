@@ -1,0 +1,138 @@
+import { chromium, expect } from '@playwright/test';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
+const site = process.env.TEST_SITE;
+if (!site) throw new Error('Run via backend/tests/run_browser.py to use an isolated database');
+const executablePath = process.env.BROWSER_EXE || ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe','C:/Program Files/Google/Chrome/Application/chrome.exe'].find(existsSync);
+const output = path.resolve('work/browser');mkdirSync(output,{recursive:true});
+const browser = await chromium.launch({headless:true,...(executablePath?{executablePath}:{})});
+const context = await browser.newContext({viewport:{width:1440,height:1000},locale:'ru-RU',timezoneId:'Europe/Moscow'});
+const page=await context.newPage(),errors=[];
+page.on('pageerror',e=>errors.push(e.message));
+const checks=[];
+async function login(role){await page.getByLabel('Логин',{exact:true}).fill(role);await page.getByLabel('Пароль',{exact:true}).fill(`Isolated_${role}_456!`);await page.getByRole('button',{name:'Войти в кабинет'}).click();await expect(page.getByRole('heading',{name:'Заявки',exact:true})).toBeVisible();}
+async function choose(scope,label,option){
+ const trigger=scope.getByRole('combobox',{name:label,exact:true});
+ await trigger.click();
+ await page.getByRole('option',{name:option,exact:true}).click();
+}
+try {
+ await page.goto(site);await expect(page.getByRole('heading',{name:'Вход в Заявку'})).toBeVisible();await page.screenshot({path:path.join(output,'login.png')});await login('operator');checks.push('operator login through Next proxy with cookies');
+ await expect(page.getByRole('button',{name:'Сотрудники',exact:true})).toHaveCount(0);
+ await expect(page.locator('.account small')).toHaveText('Оператор');
+ await page.getByRole('button',{name:'Telegram и уведомления'}).click();
+ await page.getByRole('button',{name:'Получить ссылку привязки'}).click();
+ await expect(page.getByRole('link',{name:'Открыть бота и подключить'})).toHaveAttribute('href',/^https:\/\/t\.me\/offline_test_bot\?start=link_/);
+ await page.screenshot({path:path.join(output,'telegram-link.png'),animations:'disabled'});
+ await page.getByRole('button',{name:'Закрыть окно'}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ checks.push('authenticated Telegram binding link in account dialog');
+ await page.getByRole('button',{name:'Создать заявку',exact:true}).click();
+ let dialog=page.getByRole('dialog');
+ await dialog.getByLabel('Имя заявителя',{exact:true}).fill('Анна Петрова');
+ await dialog.getByLabel('Контакт',{exact:true}).fill('school-test@example.invalid');
+ await choose(dialog,'Группа','Оборудование');
+ await choose(dialog,'Элемент','Проектор');
+ await choose(dialog,'Группа','Помещение');
+ await expect(dialog.getByRole('combobox',{name:'Элемент',exact:true})).toHaveText('Выберите элемент');checks.push('category change clears incompatible item');
+ await choose(dialog,'Группа','Оборудование');await choose(dialog,'Элемент','Проектор');
+ await dialog.getByLabel('Описание проблемы',{exact:true}).fill('Не работает проектор в кабинете 204');
+ await dialog.getByRole('button',{name:'Создать заявку',exact:true}).click();
+ await expect(page.getByRole('heading',{name:/З-\d{4}-\d+/})).toBeVisible();
+ await page.screenshot({path:path.join(output,'ticket-detail.png'),animations:'disabled'});
+ const number=await page.getByRole('dialog').getByRole('heading',{level:2}).innerText();
+ dialog=page.getByRole('dialog');await dialog.getByRole('button',{name:'Взять в работу',exact:true}).click();
+ await expect(dialog.locator('.badge')).toHaveText('В работе');
+ const assignee=dialog.getByRole('combobox',{name:'Исполнитель',exact:true});
+ await assignee.focus();
+ await page.keyboard.press('Space');
+ await expect(page.getByRole('listbox')).toBeVisible();
+ await expect(page.getByRole('option',{name:'Администратор',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('option',{name:'Оператор',exact:true})).toHaveCount(0);
+ await page.screenshot({path:path.join(output,'select-assignee.png'),animations:'disabled'});
+ await page.keyboard.press('Escape');
+ await expect(dialog).toBeVisible();
+ await expect(assignee).toBeFocused();
+ await choose(dialog,'Исполнитель','Дежурный сотрудник');
+ await dialog.getByRole('button',{name:'Переназначить',exact:true}).click();
+ await expect(dialog.getByText('Изменён исполнитель',{exact:true})).toBeVisible();
+ await dialog.getByRole('button',{name:'Выполнить',exact:true}).click();
+ await dialog.getByLabel('Что было сделано?',{exact:true}).fill('Заменён кабель HDMI. Проектор проверен.');
+ await dialog.getByRole('button',{name:'Подтвердить закрытие',exact:true}).click();
+ await expect(dialog.locator('.badge')).toHaveText('Выполнена');
+ await expect(dialog.getByText('Заявка выполнена',{exact:true})).toBeVisible();
+ await expect(dialog.getByRole('button',{name:'Взять в работу'})).toHaveCount(0);
+ await dialog.getByRole('button',{name:'Закрыть окно'}).click();
+ await page.getByRole('button',{name:'Без исполнителя',exact:true}).click();
+ await expect(page.getByText('Ничего не найдено',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Все заявки',exact:true}).click();
+ await expect(page.getByRole('button',{name:number,exact:true})).toBeVisible();
+ checks.push('distribution shortcuts show unassigned and all requests');
+ await page.getByRole('textbox',{name:'Поиск по номеру или описанию'}).fill(number);
+ await expect(page.getByRole('button',{name:number,exact:true})).toBeVisible();
+ await page.reload();await expect(page.getByRole('textbox',{name:'Поиск по номеру или описанию'})).toHaveValue(number);
+ await expect(page.getByRole('button',{name:number,exact:true})).toBeVisible();checks.push('create -> list -> detail -> take -> reassign -> complete -> history; persistent search');
+ await page.screenshot({path:path.join(output,'operator-desktop.png'),fullPage:true});
+ await page.getByRole('button',{name:'Выйти',exact:true}).click();await login('admin');
+ await page.getByRole('button',{name:'Сотрудники',exact:true}).click();
+ await page.getByRole('button',{name:'Добавить сотрудника'}).click();dialog=page.getByRole('dialog');
+ await dialog.getByLabel('Имя',{exact:true}).fill('Инженер тестовой школы');
+ await dialog.getByLabel('Логин',{exact:true}).fill('engineer');await choose(dialog,'Роль','Администратор');await choose(dialog,'Роль','Оператор');
+ await dialog.getByLabel('Пароль',{exact:true}).fill('Isolated_engineer_456!');
+ await dialog.getByRole('button',{name:'Создать сотрудника',exact:true}).click();
+ const row=page.getByRole('row').filter({hasText:'Инженер тестовой школы'});await expect(row).toBeVisible();await row.getByRole('button',{name:'Изменить'}).click();dialog=page.getByRole('dialog');
+ await dialog.getByLabel('Имя',{exact:true}).fill('Старший инженер');await dialog.getByLabel('Активный сотрудник').uncheck();await dialog.getByRole('button',{name:'Сохранить',exact:true}).click();
+ await expect(page.getByRole('row').filter({hasText:'Старший инженер'})).toContainText('Отключён');checks.push('staff creation, edit and deactivation');
+ await page.getByRole('button',{name:'Классификаторы',exact:true}).click();await page.getByRole('button',{name:'Добавить группу'}).click();dialog=page.getByRole('dialog');
+ await dialog.getByLabel('Название',{exact:true}).fill('Тестовая группа');await dialog.getByRole('button',{name:'Сохранить',exact:true}).click();
+ const card=page.locator('.category-card').filter({hasText:'Тестовая группа'});await expect(card).toBeVisible();await card.getByRole('button',{name:'Добавить элемент'}).click();dialog=page.getByRole('dialog');await dialog.getByLabel('Название',{exact:true}).fill('Тестовый элемент');await dialog.getByRole('button',{name:'Сохранить',exact:true}).click();await expect(card).toContainText('Тестовый элемент');
+ await card.getByRole('button',{name:'Изменить элемент Тестовый элемент',exact:true}).click();dialog=page.getByRole('dialog');await dialog.getByLabel('Доступно для новых заявок').uncheck();await dialog.getByRole('button',{name:'Сохранить',exact:true}).click();await expect(card).toContainText('отключён');checks.push('classifier creation and deactivation');
+ await page.getByRole('button',{name:'Статистика',exact:true}).click();await expect(page.getByRole('heading',{name:'По группам',exact:true})).toBeVisible();await expect(page.locator('.metric-3 strong')).toHaveText('1');
+ const byAssignee=page.locator('.distribution').filter({has:page.getByRole('heading',{name:'По исполнителям',exact:true})});
+ await expect(byAssignee).toContainText('в любом статусе');
+ await expect(byAssignee.locator('.bar-row').filter({hasText:'Дежурный сотрудник'}).locator('strong')).toHaveText('1');
+ await expect(byAssignee.locator('.bar-row').filter({hasText:'Администратор'}).locator('strong')).toHaveText('0');
+ await expect(byAssignee.locator('.bar-row').filter({hasText:'Оператор'}).locator('strong')).toHaveText('0');checks.push('real administrative statistics');
+ await page.screenshot({path:path.join(output,'admin-stats.png'),fullPage:true});
+ await page.setViewportSize({width:375,height:844});await page.getByRole('navigation').getByRole('button',{name:'Заявки',exact:true}).click();await expect(page.getByRole('heading',{name:'Заявки',exact:true})).toBeVisible();
+ await expect(page.getByRole('textbox',{name:'Поиск по номеру или описанию'})).toBeVisible();await expect(page.getByRole('button',{name:number,exact:true})).toBeVisible();await page.screenshot({path:path.join(output,'mobile-journal.png')});
+ await choose(page,'Статус','Новая');
+ await expect(page.getByText('Ничего не найдено',{exact:true})).toBeVisible();
+ await choose(page,'Статус','Все статусы');
+ await expect(page.getByRole('button',{name:number,exact:true})).toBeVisible();
+ const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth);if(overflow)throw new Error('Page overflows horizontally on mobile');
+ await page.getByRole('button',{name:'Создать заявку',exact:true}).click();await expect(page.getByRole('dialog')).toBeVisible();await page.screenshot({path:path.join(output,'mobile-form.png'),fullPage:true});await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Создать заявку',exact:true})).toBeFocused();
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await page.getByRole('button',{name:'Создать заявку',exact:true}).click();
+ await expect(page.getByRole('dialog')).toBeVisible();
+ const duration=await page.getByRole('dialog').evaluate(el=>parseFloat(getComputedStyle(el).animationDuration));
+ expect(duration).toBeLessThan(0.01);
+ await page.getByRole('dialog').getByRole('button',{name:'Отмена'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
+ checks.push('375px mobile layout; dialog keyboard dismissal and focus return; reduced motion');
+ // Populate the isolated browser-test database for readable screenshots.
+ const fixtures=['Не включается компьютер в кабинете 12','Пропадает Wi‑Fi в библиотеке','Проверить проектор в актовом зале','Заменить картридж в учительской','Не открывается электронный журнал'];
+ await page.evaluate(async descriptions=>{
+   const token=document.cookie.split('; ').find(cookie=>cookie.startsWith('shkola_csrf='))?.split('=')[1];
+   for(const [index,description] of descriptions.entries()){
+     const res=await fetch('/api/tickets',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(token||'')},body:JSON.stringify({applicant_name:['Мария Орлова','Ирина Лебедева','Павел Климов'][index%3],contact:'demo@example.invalid',group_id:[1,3,1,1,1][index],item_id:[3,7,1,2,3][index],description})});
+     if(!res.ok)throw new Error('Could not prepare screenshot data: '+res.status);
+     if(index===2){
+       const ticket=await res.json();
+       const take=await fetch('/api/tickets/'+ticket.id+'/actions',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(token||'')},body:JSON.stringify({action:'take',version:ticket.version})});
+       if(!take.ok)throw new Error('Could not prepare active ticket: '+take.status);
+     }
+   }
+ },fixtures);
+ const dismissNotice=page.getByRole('button',{name:'Скрыть уведомление'});
+ if(await dismissNotice.isVisible())await dismissNotice.click();
+ await page.getByRole('button',{name:'Сбросить',exact:true}).click();
+ await page.mouse.move(2,2);
+ await expect(page.getByRole('button',{name:fixtures[0],exact:true})).toBeVisible();
+ await page.screenshot({path:path.join(output,'mobile-journal.png'),animations:'disabled'});
+ await page.setViewportSize({width:1440,height:930});
+ await page.screenshot({path:path.join(output,'journal-desktop.png'),animations:'disabled'});
+ if(errors.length)throw new Error('Browser runtime errors: '+errors.join('; '));
+ const report={result:'passed',checks,errors,screenshots:['login.png','operator-desktop.png','ticket-detail.png','admin-stats.png','mobile-journal.png','mobile-form.png','journal-desktop.png','select-assignee.png','telegram-link.png']};writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
+}catch(e){await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});throw e;}finally{await browser.close();}

@@ -1,0 +1,7 @@
+POST /api/auth/login HTTP/1.1
+Host: 127.0.0.1:8000
+Connection: close
+Content-Type: application/json
+Content-Length: 52
+
+{"login":"admin","password":"{{PASSWORD_FROM_ENV}}"}
